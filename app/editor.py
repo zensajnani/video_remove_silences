@@ -141,36 +141,60 @@ Return a JSON object with the exact structure specified in the system prompt, us
             # Generate output video
             editing_instructions = edited_transcript_json['transcription_sources']
             
-            # Create video segments with exact timestamps
-            inputs = [
-                ffmpeg.input(cut['file'], ss=cut['start'], t=cut['end']-cut['start']) 
-                for cut in editing_instructions
-            ]
+            # Create video segments with exact timestamps and re-encode
+            inputs = []
+            temp_segments = []
             
-            output_file = "ai_output.mp4"
-            
-            if inputs:
-                # Simple concatenation
-                stream_pairs = [(input.video, input.audio) for input in inputs]
-                v1 = ffmpeg.concat(*[pair[0] for pair in stream_pairs], v=1, a=0)
-                a1 = ffmpeg.concat(*[pair[1] for pair in stream_pairs], v=0, a=1)
+            try:
+                # First create individual segments
+                for i, cut in enumerate(editing_instructions):
+                    temp_file = f'temp_segment_{i}.mp4'
+                    temp_segments.append(temp_file)
+                    
+                    # Extract and re-encode each segment
+                    (
+                        ffmpeg
+                        .input(cut['file'], ss=cut['start'], t=cut['end']-cut['start'])
+                        .output(temp_file,
+                               vcodec='libx264',  # Re-encode video
+                               acodec='aac',      # Re-encode audio
+                               strict='experimental',
+                               audio_bitrate='128k')
+                        .global_args('-loglevel', 'error')
+                        .overwrite_output()
+                        .run()
+                    )
+                    inputs.append(temp_file)
                 
-                # Write final output without stream copy
-                output = (
+                # Create concat file
+                with open('segments.txt', 'w') as f:
+                    for temp_file in temp_segments:
+                        f.write(f"file '{temp_file}'\n")
+                
+                # Concatenate all segments
+                output_file = "ai_output.mp4"
+                (
                     ffmpeg
-                    .output(v1, a1, output_file,
-                           acodec='aac')  # Only specify audio codec
+                    .input('segments.txt', f='concat', safe=0)
+                    .output(output_file, c='copy')
                     .global_args('-loglevel', 'error')
                     .overwrite_output()
+                    .run()
                 )
-                output.run()
-
-            # After generating the output file
-            if os.path.exists(output_file):
-                # Get actual output duration using ffprobe
-                probe = ffmpeg.probe(output_file)
-                actual_duration = float(probe['format']['duration'])
-                print(f"\nActual Output Duration: {actual_duration:.3f} seconds")
+                
+                # Get actual output duration
+                if os.path.exists(output_file):
+                    probe = ffmpeg.probe(output_file)
+                    actual_duration = float(probe['format']['duration'])
+                    print(f"\nActual Output Duration: {actual_duration:.3f} seconds")
+                
+            finally:
+                # Cleanup temporary files
+                if os.path.exists('segments.txt'):
+                    os.remove('segments.txt')
+                for temp_file in temp_segments:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
 
             return {
                 "original_transcripts": original_transcripts,
