@@ -1,0 +1,30 @@
+# Environment variables and secrets
+.env
+service_account_zeniqle_yt_app.json
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+temp_audio_*.mp3
+ai_output.mp4
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Output directory
+outputs/ 

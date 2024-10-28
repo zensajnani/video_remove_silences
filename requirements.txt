@@ -1,0 +1,7 @@
+fastapi==0.110.0
+uvicorn==0.27.1
+python-multipart==0.0.7
+python-dotenv==1.0.1
+openai==1.14.0
+anthropic==0.19.1
+ffmpeg-python==0.2.0
