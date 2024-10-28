@@ -4,7 +4,7 @@ An AI-powered video editor that automatically removes silences, filler words, an
 
 ## Features
 
-- Automatic transcription using OpenAI Whisper
+- Automatic transcription using Google Cloud Speech-to-Text API
 - Intelligent content editing using Claude AI
 - Removes:
   - Silences
@@ -28,8 +28,11 @@ An AI-powered video editor that automatically removes silences, filler words, an
    pip install -r requirements.txt
 
 4. Create a .env file with your API keys:
-   OPENAI_API_KEY=your_openai_key
    ANTHROPIC_API_KEY=your_anthropic_key
+   GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account-key.json
+   GOOGLE_CLOUD_PROJECT=your-project-id
+
+5. Place your Google Cloud service account JSON file in the project directory
 
 ## Usage
 
@@ -41,9 +44,9 @@ An AI-powered video editor that automatically removes silences, filler words, an
 
 - Python 3.9+
 - FFmpeg installed on your system
-- OpenAI API key
+- Google Cloud project with Speech-to-Text API enabled
 - Anthropic API key
 
 ## Note
 
-Make sure to keep your API keys confidential and never commit them to the repository.
+Make sure to keep your API keys and service account files confidential and never commit them to the repository.
