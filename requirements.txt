@@ -1,5 +1,5 @@
 annotated-types==0.7.0
-anthropic==0.37.1
+anthropic==0.19.1
 anyio==4.6.2.post1
 certifi==2024.8.30
 charset-normalizer==3.4.0
@@ -26,4 +26,4 @@ tokenizers==0.20.1
 tqdm==4.66.6
 typing_extensions==4.12.2
 urllib3==2.2.3
-google-cloud-speech==2.24.1
+deepgram-sdk==2.12.0

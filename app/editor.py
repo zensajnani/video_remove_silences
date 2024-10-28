@@ -1,14 +1,11 @@
 import os
 import ffmpeg
 import json
-from google.cloud.speech_v2 import SpeechClient
-from google.cloud.speech_v2.types import cloud_speech
 import anthropic
 from typing import List
-import tempfile
 import logging
 from dotenv import load_dotenv
-from datetime import timedelta
+from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +16,7 @@ load_dotenv()
 
 # Initialize AI clients
 anthropic_client = anthropic.Anthropic()
-speech_client = SpeechClient()
+deepgram = DeepgramClient(os.getenv("DEEPGRAM_API_KEY"))
 
 # Update the SYSTEM_PROMPT to specify exact JSON format we want
 SYSTEM_PROMPT = '''You are an expert video editor tasked with creating a concise, coherent video from a transcript. You will receive an array of objects, each containing a word, its start time, and end time in seconds. Your goal is to create a JSON object specifying which words to include in the final edit.
@@ -51,21 +48,6 @@ Editing guidelines:
 11. Be aggressive in removing filler words like "um", "uh", "like", "you know", etc.
 12. Return JSON exactly in the format specified above.'''
 
-def parse_time_offset(offset) -> float:
-    """Convert Google Cloud time offset to seconds"""
-    if isinstance(offset, timedelta):
-        # If it's already a timedelta, just convert to seconds
-        return offset.total_seconds()
-    elif isinstance(offset, str):
-        # If it's a string, parse it
-        parts = offset.strip('"').split(':')
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        seconds = float(parts[2])
-        return hours * 3600 + minutes * 60 + seconds
-    else:
-        raise ValueError(f"Unexpected offset type: {type(offset)}")
-
 async def process_videos(video_files: List[str]) -> dict:
     temp_files = []
     simplified_words = []
@@ -74,12 +56,12 @@ async def process_videos(video_files: List[str]) -> dict:
     try:
         # Convert videos and transcribe
         for idx, video_file in enumerate(video_files):
-            # First convert video to WAV with correct format for Google Speech
+            # First convert video to WAV
             temp_wav = f'temp_audio_{idx}.wav'
             temp_files.append(temp_wav)
             
             try:
-                # Convert to WAV using exact command that works
+                # Convert to WAV
                 (ffmpeg
                  .input(video_file)
                  .output(temp_wav,
@@ -91,45 +73,45 @@ async def process_videos(video_files: List[str]) -> dict:
                  .overwrite_output()
                  .run())
 
-                # Configure recognition with explicit US English
-                config = cloud_speech.RecognitionConfig(
-                    explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
-                        encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
-                        sample_rate_hertz=16000,
-                        audio_channel_count=1
-                    ),
-                    features=cloud_speech.RecognitionFeatures(
-                        enable_word_confidence=True,
-                        enable_word_time_offsets=True,
-                    ),
-                    model="long",
-                    language_codes=["en-US"],
+                # Read the audio file
+                with open(temp_wav, "rb") as file:
+                    buffer_data = file.read()
+
+                payload: FileSource = {
+                    "buffer": buffer_data,
+                }
+
+                # Configure Deepgram options
+                options = PrerecordedOptions(
+                    model="nova-2",
+                    smart_format=True,
+                    diarize=True,  # Enable speaker detection
+                    filler_words=True  # Explicitly enable filler word detection
                 )
 
-                # Create the request
-                with open(temp_wav, "rb") as audio_file:
-                    content = audio_file.read()
-
-                request = cloud_speech.RecognizeRequest(
-                    recognizer=f"projects/{os.getenv('GOOGLE_CLOUD_PROJECT')}/locations/global/recognizers/_",
-                    config=config,
-                    content=content
-                )
-
-                # Get transcription
-                response = speech_client.recognize(request=request)
-
+                # Get transcription using REST API
+                response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
+                
                 # Process results
-                for result in response.results:
-                    for alternative in result.alternatives:
+                for channel in response.results.channels:
+                    for alternative in channel.alternatives:
                         original_transcripts.append(alternative.transcript)
                         for word in alternative.words:
-                            simplified_words.append({
+                            word_data = {
                                 "word": word.word,
-                                "start": parse_time_offset(word.start_offset),
-                                "end": parse_time_offset(word.end_offset),
-                                "file": video_file  # Keep original video file for final edit
-                            })
+                                "start": float(word.start),
+                                "end": float(word.end),
+                                "file": video_file
+                            }
+                            
+                            # Add filler word detection if available
+                            try:
+                                if hasattr(word, "is_filler"):
+                                    word_data["is_filler"] = word.is_filler
+                            except:
+                                word_data["is_filler"] = False
+                                
+                            simplified_words.append(word_data)
 
             except Exception as e:
                 logger.error(f"Error processing video {video_file}: {str(e)}")
@@ -159,41 +141,35 @@ Return a JSON object with the exact structure specified in the system prompt, us
             # Generate output video
             editing_instructions = edited_transcript_json['transcription_sources']
             
-            # Create video segments with both video and audio
-            inputs = [ffmpeg.input(cut['file'], ss=cut['start'], t=cut['end']-cut['start']) 
-                     for cut in editing_instructions]
+            # Create video segments with exact timestamps
+            inputs = [
+                ffmpeg.input(cut['file'], ss=cut['start'], t=cut['end']-cut['start']) 
+                for cut in editing_instructions
+            ]
             
             output_file = "ai_output.mp4"
             
             if inputs:
-                # Concatenate video segments
+                # Simple concatenation
                 stream_pairs = [(input.video, input.audio) for input in inputs]
-                concat_streams = ffmpeg.concat(*[item for sublist in stream_pairs for item in sublist], 
-                                            v=1, a=1)
+                v1 = ffmpeg.concat(*[pair[0] for pair in stream_pairs], v=1, a=0)
+                a1 = ffmpeg.concat(*[pair[1] for pair in stream_pairs], v=0, a=1)
                 
-                # Create a complex filter for audio silence removal
-                # Keep video stream as is, only process audio
+                # Write final output
                 output = (
                     ffmpeg
-                    .output(
-                        # Video stream goes directly to output
-                        concat_streams['v'],
-                        # Audio stream goes through silence removal
-                        concat_streams['a'].filter('silenceremove',
-                            stop_periods='-1',
-                            stop_duration='1',
-                            stop_threshold='-60dB'
-                        ),
-                        output_file,
-                        acodec='aac',
-                        vcodec='copy'
-                    )
+                    .output(v1, a1, output_file)
                     .global_args('-loglevel', 'error')
                     .overwrite_output()
                 )
-                
-                # Run the ffmpeg command
                 output.run()
+
+            # After generating the output file
+            if os.path.exists(output_file):
+                # Get actual output duration using ffprobe
+                probe = ffmpeg.probe(output_file)
+                actual_duration = float(probe['format']['duration'])
+                print(f"\nActual Output Duration: {actual_duration:.3f} seconds")
 
             return {
                 "original_transcripts": original_transcripts,
@@ -216,18 +192,69 @@ if __name__ == "__main__":
     try:
         import asyncio
         
-        video_file = "silence-remover-test-vid.mp4"  # Changed to .mp4
+        video_file = "silence-remover-test-vid.mp4"
+        
+        print("\n" + "="*50)
+        print("Starting Video Processing")
+        print("="*50)
+        
         result = asyncio.run(process_videos([video_file]))
         
-        print("\nProcessing Results:")
-        print("Original Transcript:")
-        print(result["original_transcripts"][0])
-        print("\nEdited Transcript:")
-        print(result["edited_script"])
-        print("\nWord Timestamps:")
+        print("\nDeepgram Raw Transcription (with filler words):")
+        print("-"*50)
+        for idx, transcript in enumerate(result["original_transcripts"]):
+            print(f"Alternative {idx + 1}:")
+            print(transcript)
+            print()
+        
+        print("\nDetailed Word Analysis:")
+        print("-"*50)
+        original_words = []
         for word in result["word_timestamps"]:
-            print(f"{word['word']}: {word['start']:.2f}s - {word['end']:.2f}s")
+            start = f"{word['start']:.3f}".rjust(7)  # Changed to 3 decimal places
+            end = f"{word['end']:.3f}".rjust(7)
+            is_filler = word.get('is_filler', False)
+            filler_mark = "[FILLER]" if is_filler else ""
+            word_info = f"{start}s - {end}s: {word['word']:<15} {filler_mark}"
+            original_words.append(word_info)
+            
+        # Print in columns for better readability
+        col_width = max(len(word) for word in original_words) + 2
+        num_cols = 2
+        for i in range(0, len(original_words), num_cols):
+            row_words = original_words[i:i + num_cols]
+            print("".join(word.ljust(col_width) for word in row_words))
+        
+        print("\nEdited Version:")
+        print("-"*50)
+        print("Final Transcript:")
+        print(result["edited_script"])
+        print()
+        
+        print("Edited Segments:")
+        for word in result["word_timestamps"]:
+            start = f"{word['start']:.3f}".rjust(7)
+            end = f"{word['end']:.3f}".rjust(7)
+            duration = f"{(word['end'] - word['start']):.3f}".rjust(7)
+            print(f"{start}s - {end}s ({duration}s): {word['word']}")
+            
+        # Calculate and show timing statistics
+        if result["word_timestamps"]:
+            first_word = result["word_timestamps"][0]
+            last_word = result["word_timestamps"][-1]
+            total_duration = last_word['end'] - first_word['start']
+            
+            # Calculate total speaking time (sum of word durations)
+            speaking_time = sum(word['end'] - word['start'] for word in result["word_timestamps"])
+            
+            print(f"\nTiming Analysis:")
+            print(f"Total Duration: {total_duration:.3f} seconds")
+            print(f"Speaking Time: {speaking_time:.3f} seconds")
+            print(f"Silence Removed: {(total_duration - speaking_time):.3f} seconds")
+            print(f"Compression Ratio: {speaking_time/total_duration:.1%}")
+        
         print(f"\nOutput saved to: {result['output_file']}")
+        print("="*50)
         
     except Exception as e:
         logger.error(f"Failed to run editor: {e}")

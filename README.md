@@ -4,7 +4,7 @@ An AI-powered video editor that automatically removes silences, filler words, an
 
 ## Features
 
-- Automatic transcription using Google Cloud Speech-to-Text API
+- Automatic transcription using Deepgram API with filler word detection
 - Intelligent content editing using Claude AI
 - Removes:
   - Silences
@@ -29,10 +29,7 @@ An AI-powered video editor that automatically removes silences, filler words, an
 
 4. Create a .env file with your API keys:
    ANTHROPIC_API_KEY=your_anthropic_key
-   GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account-key.json
-   GOOGLE_CLOUD_PROJECT=your-project-id
-
-5. Place your Google Cloud service account JSON file in the project directory
+   DEEPGRAM_API_KEY=your-deepgram-api-key
 
 ## Usage
 
@@ -44,9 +41,9 @@ An AI-powered video editor that automatically removes silences, filler words, an
 
 - Python 3.9+
 - FFmpeg installed on your system
-- Google Cloud project with Speech-to-Text API enabled
+- Deepgram API key
 - Anthropic API key
 
 ## Note
 
-Make sure to keep your API keys and service account files confidential and never commit them to the repository.
+Make sure to keep your API keys confidential and never commit them to the repository.
