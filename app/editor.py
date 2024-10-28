@@ -155,13 +155,11 @@ Return a JSON object with the exact structure specified in the system prompt, us
                 v1 = ffmpeg.concat(*[pair[0] for pair in stream_pairs], v=1, a=0)
                 a1 = ffmpeg.concat(*[pair[1] for pair in stream_pairs], v=0, a=1)
                 
-                # Write final output with video stream copy and audio re-encoding
+                # Write final output without stream copy
                 output = (
                     ffmpeg
                     .output(v1, a1, output_file,
-                           vcodec='copy',  # Copy video stream
-                           acodec='aac',   # Re-encode audio to AAC
-                           strict=2)       # Allow experimental AAC encoder if needed
+                           acodec='aac')  # Only specify audio codec
                     .global_args('-loglevel', 'error')
                     .overwrite_output()
                 )
